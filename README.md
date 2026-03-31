@@ -95,9 +95,15 @@ MongoDB Database
 
 ## 🖼️ Screenshots
 
-| Homepage | Dashboard | Job Page |
-|----------|-----------|----------|
-| ![](./screenshots/home.png) | ![](./screenshots/dashboard.png) | ![](./screenshots/job.png) |
+### Homepage & Dashboard
+
+| Homepage | Dashboard |
+|----------|-----------|
+| ![](./screenshots/home.png) | ![](./screenshots/dashboard.png) |
+
+### Job Page
+
+![](./screenshots/job.png)
 
 ---
 
