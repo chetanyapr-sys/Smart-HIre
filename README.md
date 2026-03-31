@@ -103,7 +103,7 @@ MongoDB Database
 
 ### Job Page
 
-![](./screenshots/job.png)
+![](./screenshots/jobs.png)
 
 ---
 
