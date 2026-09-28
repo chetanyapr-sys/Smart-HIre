@@ -150,6 +150,7 @@ export default function Home() {
           ))}
         </div>
         <div className="flex items-center gap-3">
+          <a href="/jobs" className="text-sm text-gray-400 hover:text-white transition-colors px-4 py-2">Browse Jobs</a>
           <a href="/login" className="text-sm text-gray-400 hover:text-white transition-colors px-4 py-2">Login</a>
           <a href="/signup" className="text-sm bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-5 py-2 rounded-full transition-all hover:scale-105">
             Get Started

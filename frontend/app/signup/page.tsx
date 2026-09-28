@@ -1,8 +1,13 @@
 "use client";
 import { useState } from "react";
 import { motion } from "framer-motion";
+import { useSearchParams } from "next/navigation";
+import { API_BASE_URL } from "@/lib/api";
 
 export default function Signup() {
+  const searchParams = useSearchParams();
+  const teamParam = searchParams.get("team");
+
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -16,10 +21,15 @@ export default function Signup() {
     setError("");
 
     try {
-      const res = await fetch("http://localhost:5000/api/auth/signup", {
+      const res = await fetch(`${API_BASE_URL}/api/auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({
+          name,
+          email,
+          password,
+          ...(teamParam ? { team: teamParam } : {}),
+        }),
       });
 
       const data = await res.json();
@@ -52,8 +62,12 @@ export default function Signup() {
             <div className="w-8 h-8 bg-gradient-to-br from-violet-500 to-indigo-600 rounded-lg flex items-center justify-center text-sm font-bold">S</div>
             <span className="text-xl font-bold bg-gradient-to-r from-violet-400 to-indigo-400 bg-clip-text text-transparent">SmartHire</span>
           </a>
-          <h1 className="text-3xl font-black text-white mb-2">Create account</h1>
-          <p className="text-gray-400">Start hiring smarter today</p>
+          <h1 className="text-3xl font-black text-white mb-2">
+            {teamParam ? "Join your team" : "Create account"}
+          </h1>
+          <p className="text-gray-400">
+            {teamParam ? "You've been invited to join a team on SmartHire" : "Start hiring smarter today"}
+          </p>
         </div>
 
         {/* Form */}
@@ -118,7 +132,7 @@ export default function Signup() {
               disabled={loading}
               className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 text-white py-3 rounded-xl font-semibold transition-all hover:from-violet-500 hover:to-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? "Creating account..." : "Create Account"}
+              {loading ? "Creating account..." : teamParam ? "Join Team" : "Create Account"}
             </motion.button>
           </form>
 
