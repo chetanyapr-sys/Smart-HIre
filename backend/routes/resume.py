@@ -25,6 +25,61 @@ candidates_collection = db['candidates']
 jobs = db['jobs']
 users_collection = db['users']
 
+# Email match case-insensitive karne ke liye (Pankaj@Gmail.com == pankaj@gmail.com)
+EMAIL_COLLATION = {'locale': 'en', 'strength': 2}
+
+
+# ---------------------------------------------------------------
+# Team access helpers (jobs.py ke same rule par chalte hain)
+# ---------------------------------------------------------------
+
+def get_team_id(user_id):
+    """Current logged-in user ki team_id nikalo."""
+    user = users_collection.find_one({'_id': ObjectId(user_id)})
+    return user.get('team_id') if user else None
+
+
+def get_authorized_job(job_id, team_id):
+    """
+    Job tabhi return hoti hai jab wo user ki team ki ho.
+    Purani jobs (bina team_id) sabko dikhti hain (backward compatible),
+    bilkul jobs.py ki tarah. Galat ID, missing job ya dusri team ki job
+    ho to None milta hai.
+    """
+    try:
+        job = jobs.find_one({'_id': ObjectId(job_id)})
+    except Exception:
+        return None
+    if not job:
+        return None
+    if job.get('team_id') and job.get('team_id') != team_id:
+        return None
+    return job
+
+
+def get_authorized_candidate(candidate_id, team_id, include_file=False):
+    """
+    Candidate tabhi return hota hai jab uski job user ki team ki ho.
+    include_file=True sirf PDF endpoint ke liye (bhaari base64 field).
+    """
+    try:
+        projection = None if include_file else {'resume_file': 0}
+        candidate = candidates_collection.find_one(
+            {'_id': ObjectId(candidate_id)}, projection
+        )
+    except Exception:
+        return None
+    if not candidate:
+        return None
+    if not get_authorized_job(candidate.get('job_id'), team_id):
+        return None
+    return candidate
+
+
+# ---------------------------------------------------------------
+# AI helpers
+# ---------------------------------------------------------------
+
 # PDF se text nikalo (ab bytes leta hai, file object nahi - kyunki
 # original PDF bytes ko hum alag se resume preview ke liye bhi store karte hain)
 def extract_text_from_pdf(file_bytes):
@@ -56,6 +111,11 @@ def score_resume(resume_text, job_description):
     similarity = cosine_similarity(resume_embedding, job_embedding)[0][0]
     return round(float(similarity) * 100, 2)
 
+
+# ---------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------
+
 # Resume upload karo (recruiter, bulk, login zaroori)
 @resume_bp.route('/upload/<job_id>', methods=['POST'])
 @token_required
@@ -63,12 +123,13 @@ def upload_resume(current_user_id, job_id):
     if 'resumes' not in request.files:
         return jsonify({'message': 'No files uploaded'}), 400
 
-    files = request.files.getlist('resumes')
-    job = jobs.find_one({'_id': ObjectId(job_id)})
+    team_id = get_team_id(current_user_id)
+    job = get_authorized_job(job_id, team_id)
 
     if not job:
         return jsonify({'message': 'Job not found'}), 404
 
+    files = request.files.getlist('resumes')
     job_description = job['description'] + ' ' + ' '.join(job['required_skills'])
 
     results = []
@@ -116,20 +177,26 @@ def apply_to_job(job_id):
         return jsonify({'message': 'Resume file is required'}), 400
 
     applicant_name = request.form.get('name', '').strip()
-    applicant_email = request.form.get('email', '').strip()
+    # Email hamesha lowercase me store karo, taaki duplicate/status check me
+    # case ki wajah se mismatch na ho
+    applicant_email = request.form.get('email', '').strip().lower()
 
     if not applicant_name or not applicant_email:
         return jsonify({'message': 'Name and email are required'}), 400
 
-    job = jobs.find_one({'_id': ObjectId(job_id)})
+    try:
+        job = jobs.find_one({'_id': ObjectId(job_id)})
+    except Exception:
+        job = None
     if not job:
         return jsonify({'message': 'Job not found'}), 404
 
     # Duplicate check: same email pehle se is job ke liye apply kar chuka hai kya
-    existing = candidates_collection.find_one({
-        'job_id': job_id,
-        'email': applicant_email
-    })
+    # (collation se purane mixed-case emails bhi match ho jaate hain)
+    existing = candidates_collection.find_one(
+        {'job_id': job_id, 'email': applicant_email},
+        collation=EMAIL_COLLATION
+    )
     if existing:
         return jsonify({'message': 'You have already applied to this job with this email.'}), 409
 
@@ -162,10 +229,14 @@ def apply_to_job(job_id):
         'score': score
     }), 201
 
-# Results dekho
+# Results dekho (sirf apni team ki job ke)
 @resume_bp.route('/results/<job_id>', methods=['GET'])
 @token_required
 def get_results(current_user_id, job_id):
+    team_id = get_team_id(current_user_id)
+    if not get_authorized_job(job_id, team_id):
+        return jsonify({'message': 'Job not found'}), 404
+
     all_resumes = list(candidates_collection.find(
         {'job_id': job_id},
         {'resume_file': 0}  # bhaari base64 field list view me nahi bhejni
@@ -191,13 +262,15 @@ def update_status(current_user_id, candidate_id):
         if status not in ['pending', 'shortlisted', 'rejected']:
             return jsonify({'message': 'Invalid status value'}), 400
 
-        result = candidates_collection.update_one(
-            {'_id': ObjectId(candidate_id)},
+        team_id = get_team_id(current_user_id)
+        candidate = get_authorized_candidate(candidate_id, team_id)
+        if not candidate:
+            return jsonify({'message': 'Candidate not found'}), 404
+
+        candidates_collection.update_one(
+            {'_id': candidate['_id']},
             {'$set': {'status': status}}
         )
-
-        if result.matched_count == 0:
-            return jsonify({'message': 'Candidate not found'}), 404
 
         return jsonify({'message': 'Status updated', 'status': status}), 200
     except Exception as e:
@@ -209,10 +282,8 @@ def update_status(current_user_id, candidate_id):
 @token_required
 def get_candidate(current_user_id, candidate_id):
     try:
-        candidate = candidates_collection.find_one(
-            {'_id': ObjectId(candidate_id)},
-            {'resume_file': 0}  # PDF bytes yahan nahi bhejni, alag endpoint hai
-        )
+        team_id = get_team_id(current_user_id)
+        candidate = get_authorized_candidate(candidate_id, team_id)
 
         if not candidate:
             return jsonify({'message': 'Candidate not found'}), 404
@@ -222,6 +293,11 @@ def get_candidate(current_user_id, candidate_id):
         candidate.setdefault('name', None)
         candidate.setdefault('email', None)
         candidate.setdefault('source', 'recruiter_upload')
+
+        # Notes me datetime hota hai, JSON ke liye string me badlo
+        for note in candidate.get('notes', []):
+            if isinstance(note.get('created_at'), datetime.datetime):
+                note['created_at'] = note['created_at'].isoformat()
 
         return jsonify(candidate), 200
     except Exception as e:
@@ -233,7 +309,8 @@ def get_candidate(current_user_id, candidate_id):
 @token_required
 def get_resume_pdf(current_user_id, candidate_id):
     try:
-        candidate = candidates_collection.find_one({'_id': ObjectId(candidate_id)})
+        team_id = get_team_id(current_user_id)
+        candidate = get_authorized_candidate(candidate_id, team_id, include_file=True)
 
         if not candidate or not candidate.get('resume_file'):
             return jsonify({'message': 'Resume PDF not found'}), 404
@@ -255,6 +332,10 @@ def get_resume_pdf(current_user_id, candidate_id):
 @token_required
 def export_candidates(current_user_id, job_id):
     try:
+        team_id = get_team_id(current_user_id)
+        if not get_authorized_job(job_id, team_id):
+            return jsonify({'message': 'Job not found'}), 404
+
         all_resumes = list(candidates_collection.find({'job_id': job_id}, {'resume_file': 0}))
         all_resumes.sort(key=lambda x: x.get('score', 0), reverse=True)
 
@@ -295,6 +376,11 @@ def add_note(current_user_id, candidate_id):
         if not text:
             return jsonify({'message': 'Note text is required'}), 400
 
+        team_id = get_team_id(current_user_id)
+        candidate = get_authorized_candidate(candidate_id, team_id)
+        if not candidate:
+            return jsonify({'message': 'Candidate not found'}), 404
+
         author = users_collection.find_one({'_id': ObjectId(current_user_id)})
         author_name = author.get('name', 'Unknown') if author else 'Unknown'
 
@@ -305,13 +391,10 @@ def add_note(current_user_id, candidate_id):
             'created_at': datetime.datetime.utcnow()
         }
 
-        result = candidates_collection.update_one(
-            {'_id': ObjectId(candidate_id)},
+        candidates_collection.update_one(
+            {'_id': candidate['_id']},
             {'$push': {'notes': note}}
         )
-
-        if result.matched_count == 0:
-            return jsonify({'message': 'Candidate not found'}), 404
 
         # created_at ko string me convert karo taaki JSON me bhej sakein
         note['created_at'] = note['created_at'].isoformat()
@@ -326,10 +409,8 @@ def add_note(current_user_id, candidate_id):
 @token_required
 def get_notes(current_user_id, candidate_id):
     try:
-        candidate = candidates_collection.find_one(
-            {'_id': ObjectId(candidate_id)},
-            {'notes': 1}
-        )
+        team_id = get_team_id(current_user_id)
+        candidate = get_authorized_candidate(candidate_id, team_id)
 
         if not candidate:
             return jsonify({'message': 'Candidate not found'}), 404
@@ -347,21 +428,22 @@ def get_notes(current_user_id, candidate_id):
         return jsonify(notes), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-    
+
+
 # Public route: candidate apna status check kare (bina login), email verify karke
 @resume_bp.route('/check-status/<job_id>', methods=['POST'])
 def check_application_status(job_id):
     try:
         data = request.get_json()
-        email = data.get('email', '').strip()
+        email = data.get('email', '').strip().lower()
 
         if not email:
             return jsonify({'message': 'Email is required'}), 400
 
-        candidate = candidates_collection.find_one({
-            'job_id': job_id,
-            'email': email
-        })
+        candidate = candidates_collection.find_one(
+            {'job_id': job_id, 'email': email},
+            collation=EMAIL_COLLATION
+        )
 
         if not candidate:
             return jsonify({'message': 'No application found with this email for this job.'}), 404

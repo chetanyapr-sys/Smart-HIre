@@ -30,15 +30,38 @@ export default function CandidateDetail() {
       return;
     }
 
-    fetch(`${API_BASE_URL}/api/resume/candidate/${candidateId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => res.json())
-      .then((data) => setCandidate(data))
-      .catch(() => console.error("Failed to fetch candidate"))
-      .finally(() => setLoading(false));
+    const loadCandidate = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/resume/candidate/${candidateId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
 
-    fetchNotes();
+        // Token expire ho gaya ya invalid hai -> dobara login
+        if (res.status === 401) {
+          window.location.href = "/login";
+          return;
+        }
+
+        // Candidate nahi mila (galat ID ya dusri team ka) -> "not found" dikhao
+        if (!res.ok) {
+          setCandidate(null);
+          setNotesLoading(false);
+          return;
+        }
+
+        const data = await res.json();
+        setCandidate(data);
+        fetchNotes();
+      } catch {
+        console.error("Failed to fetch candidate");
+        setCandidate(null);
+        setNotesLoading(false);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadCandidate();
   }, [candidateId]);
 
   const fetchNotes = async () => {
@@ -89,10 +112,12 @@ export default function CandidateDetail() {
   };
 
   const handleStatus = async (status: string) => {
+    const previousStatus = candidate?.status;
+    // Pehle screen pe turant badlo (optimistic update)
     setCandidate((prev: any) => ({ ...prev, status }));
     const token = localStorage.getItem("token");
     try {
-      await fetch(`${API_BASE_URL}/api/resume/status/${candidateId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/resume/status/${candidateId}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -100,8 +125,14 @@ export default function CandidateDetail() {
         },
         body: JSON.stringify({ status }),
       });
+
+      // Save fail hua toh screen pe purana status wapas dikhao
+      if (!res.ok) {
+        setCandidate((prev: any) => ({ ...prev, status: previousStatus }));
+      }
     } catch {
       console.error("Failed to update status");
+      setCandidate((prev: any) => ({ ...prev, status: previousStatus }));
     }
   };
 
@@ -150,10 +181,10 @@ export default function CandidateDetail() {
     <div className="min-h-screen text-gray-900 dark:text-white">
       <div className="max-w-3xl mx-auto px-8 py-10">
         <Link
-          href={`/dashboard/job/${jobId}`}
+          href={candidate ? `/dashboard/job/${jobId}` : "/dashboard"}
           className="inline-flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-violet-600 dark:hover:text-violet-400 transition-colors mb-6"
         >
-          <ArrowLeft size={15} /> Back to candidates
+          <ArrowLeft size={15} /> {candidate ? "Back to candidates" : "Back to dashboard"}
         </Link>
 
         {loading ? (
@@ -161,6 +192,15 @@ export default function CandidateDetail() {
         ) : !candidate ? (
           <div className="bg-black/[0.02] dark:bg-white/[0.03] border border-black/10 dark:border-white/10 rounded-2xl p-16 text-center">
             <h3 className="text-lg font-bold mb-2">Candidate not found</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+              This candidate doesn&apos;t exist, or you don&apos;t have access to it.
+            </p>
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-full bg-violet-500 text-white hover:bg-violet-600 transition"
+            >
+              Go to Dashboard
+            </Link>
           </div>
         ) : (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
