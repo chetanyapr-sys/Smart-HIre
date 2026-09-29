@@ -1,10 +1,10 @@
 "use client";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { motion } from "framer-motion";
 import { useSearchParams } from "next/navigation";
 import { API_BASE_URL } from "@/lib/api";
 
-export default function Signup() {
+function SignupForm() {
   const searchParams = useSearchParams();
   const teamParam = searchParams.get("team");
 
@@ -47,7 +47,7 @@ export default function Signup() {
   };
 
   return (
-<div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center pt-6 px-4 overflow-hidden">
+    <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center pt-6 px-4 overflow-hidden">
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-violet-600/10 rounded-full blur-3xl pointer-events-none" />
 
       <motion.div
@@ -145,5 +145,13 @@ export default function Signup() {
         </div>
       </motion.div>
     </div>
+  );
+}
+
+export default function Signup() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#0a0a0f]" />}>
+      <SignupForm />
+    </Suspense>
   );
 }
