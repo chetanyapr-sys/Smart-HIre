@@ -10,8 +10,11 @@ load_dotenv()
 app = Flask(__name__)
 
 # Production me sirf apne frontend ka origin allow karo, har jagah se nahi
-frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
-CORS(app, resources={r"/api/*": {"origins": frontend_url}})
+# FRONTEND_URL me ek ya zyada URL ho sakte hain (comma se alag kiye hue)
+# Trailing slash hata dete hain, warna CORS origin match nahi hota
+raw_origins = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+allowed_origins = [o.strip().rstrip('/') for o in raw_origins.split(',') if o.strip()]
+CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
 
 # Routes import karo
 from routes.auth import auth_bp
